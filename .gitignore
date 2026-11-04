@@ -1,0 +1,5 @@
+INTERVIEW_NOTES.md
+build/
+.venv/
+__pycache__/
+*.o
