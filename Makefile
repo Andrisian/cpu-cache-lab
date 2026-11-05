@@ -2,7 +2,7 @@
 CXX      := g++
 CXXFLAGS := -O2 -std=c++17 -Wall -Wextra
 
-.PHONY: run-sweep run-matrix clean
+.PHONY: run-sweep run-matrix run-list clean
 
 build/working_set_sweep: bench/working_set_sweep.cpp
 	mkdir -p build
@@ -21,6 +21,15 @@ build/matrix_traversal: bench/matrix_traversal.cpp
 run-matrix: build/matrix_traversal
 	mkdir -p results
 	./build/matrix_traversal results/matrix_traversal.csv
+
+build/array_vs_list: bench/array_vs_list.cpp
+	mkdir -p build
+	$(CXX) $(CXXFLAGS) -o $@ $<
+
+# Build, then run array vs list and write results/array_vs_list.csv
+run-list: build/array_vs_list
+	mkdir -p results
+	./build/array_vs_list results/array_vs_list.csv
 
 clean:
 	rm -rf build
