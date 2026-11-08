@@ -2,7 +2,7 @@
 CXX      := g++
 CXXFLAGS := -O2 -std=c++17 -Wall -Wextra
 
-.PHONY: run run-sweep run-matrix run-list clean
+.PHONY: run run-sweep run-matrix run-list profile clean
 
 build/working_set_sweep: bench/working_set_sweep.cpp
 	mkdir -p build
@@ -34,6 +34,15 @@ run-list: build/array_vs_list
 # Run all three benchmarks in order (writes all CSVs in results/).
 # Do not use `make -j` here: timing runs must not overlap.
 run: run-sweep run-matrix run-list
+
+build/profile_matrix: bench/profile_matrix.cpp
+	mkdir -p build
+	$(CXX) $(CXXFLAGS) -o $@ $<
+
+# Build, then run the perf stat profile (needs perf; see profile.sh).
+# Writes results/profile_*.csv. Not part of `make run`.
+profile: build/profile_matrix
+	bash ./profile.sh
 
 clean:
 	rm -rf build
