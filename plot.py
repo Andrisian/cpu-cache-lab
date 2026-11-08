@@ -17,13 +17,14 @@ skipped and the others are still made.
 """
 
 import csv
+import math
 import os
 import sys
 
 import matplotlib
 matplotlib.use("Agg")  # file output only, no GUI window
 import matplotlib.pyplot as plt
-from matplotlib.ticker import FuncFormatter, NullFormatter, NullLocator
+from matplotlib.ticker import FixedLocator, FuncFormatter, NullFormatter, NullLocator
 
 # Cache sizes of THIS machine (Intel i7-8565U), from `lscpu --caches`.
 # L1d and L2 are per core; the 8 MiB L3 is shared by all cores.
@@ -36,7 +37,7 @@ NODE_BYTES = 16     # list node: int64 value + 8-byte pointer
 ELEMENT_BYTES = 8   # array element: int64
 
 HEADER = ["benchmark", "pattern", "size_bytes", "ns_per_access"]
-FOOTNOTE = "median of 7 runs, single run, CPU clock not controlled"
+FOOTNOTE = "median of 7 repetitions, one invocation, CPU clock not controlled"
 
 
 # ---------------------------------------------------------------- reading
@@ -75,6 +76,12 @@ def fmt_bytes(value, _pos):
     return "%g B" % value
 
 
+def fmt_bytes_with_n(value, _pos):
+    """Matrix size -> '8 MiB (N=1024)'. The matrix is N x N doubles of 8 bytes,
+    so N = sqrt(size_bytes / 8); N is derived from the CSV value, not invented."""
+    return "%s (N=%d)" % (fmt_bytes(value, None), round(math.sqrt(value / 8)))
+
+
 def fmt_count(value, _pos):
     """1000 -> '1k', 3000000 -> '3M' (element counts)."""
     if value >= 1e6:
@@ -85,10 +92,14 @@ def fmt_count(value, _pos):
 
 
 # ---------------------------------------------------------------- drawing
-def make_figure(series, log_base, x_formatter, cache_lines, title, xlabel, notes, out_path):
-    """series      : list of (label, [x...], [y...]) - the measured points
-    cache_lines : list of (x_position, label) - dotted vertical lines
-    notes       : extra footnote lines (the standard footnote is always added)"""
+def make_figure(series, log_base, x_formatter, cache_lines, title, xlabel, notes, out_path,
+                y_minor_labels=None):
+    """series         : list of (label, [x...], [y...]) - the measured points
+    cache_lines    : list of (x_position, label) or (x_position, label, placement),
+                     dotted vertical lines; placement "mid-right" puts the label
+                     to the right of the line at mid-height (default: top-left)
+    notes          : extra footnote lines (the standard footnote is always added)
+    y_minor_labels : optional y values that get a (minor) tick label, e.g. [2, 5, 20]"""
     fig, ax = plt.subplots(figsize=(9, 5.5))
 
     markers = ["o", "s", "^", "D"]
@@ -101,6 +112,11 @@ def make_figure(series, log_base, x_formatter, cache_lines, title, xlabel, notes
     ax.set_xscale("log", base=log_base)
     ax.set_yscale("log")
 
+    # Extra labelled ticks between the decades (scale itself is unchanged).
+    if y_minor_labels:
+        ax.yaxis.set_minor_locator(FixedLocator(y_minor_labels))
+        ax.yaxis.set_minor_formatter(FuncFormatter(lambda v, _pos: "%g" % v))
+
     # Tick exactly at the measured x values, labelled in KiB/MiB (or k/M).
     ticks = sorted(set(all_x))
     ax.set_xticks(ticks)
@@ -111,11 +127,21 @@ def make_figure(series, log_base, x_formatter, cache_lines, title, xlabel, notes
 
     # Dotted cache lines, only where they fall inside the plotted x range.
     x_min, x_max = min(all_x), max(all_x)
-    for x, label in cache_lines:
+    for line in cache_lines:
+        x, label = line[0], line[1]
+        placement = line[2] if len(line) > 2 else "top-left"
         if x_min < x < x_max:
             ax.axvline(x, linestyle=":", color="gray", linewidth=1.2)
-            ax.text(x, 0.98, label + " ", rotation=90, ha="right", va="top",
-                    fontsize=8, color="dimgray", transform=ax.get_xaxis_transform())
+            if placement == "mid-right":
+                # right of the line, mid-height: clear of both data lines there
+                # annotate = text with a fixed offset in points, so the label
+                # does not sit on top of the dotted line.
+                ax.annotate(label, xy=(x, 0.40), xycoords=ax.get_xaxis_transform(),
+                            xytext=(4, 0), textcoords="offset points", rotation=90,
+                            ha="left", va="center", fontsize=8, color="dimgray")
+            else:
+                ax.text(x, 0.98, label + " ", rotation=90, ha="right", va="top",
+                        fontsize=8, color="dimgray", transform=ax.get_xaxis_transform())
 
     ax.set_xlabel(xlabel)
     ax.set_ylabel("ns per access")
@@ -173,11 +199,12 @@ def fig2(results_dir, figures_dir):
         return
     notes = ["every point reads the same number of elements (2^24), so ns per access "
              "is proportional to total time"]
-    make_figure(series, 2, fmt_bytes,
+    make_figure(series, 2, fmt_bytes_with_n,
                 [(b, "%s %s" % (name, fmt_bytes(b, None))) for name, b in CACHES],
                 "Figure 2: summing an N x N matrix of doubles, row-major vs column-major",
                 "matrix size (N x N x 8 bytes)", notes,
-                os.path.join(figures_dir, "fig2_matrix_traversal.png"))
+                os.path.join(figures_dir, "fig2_matrix_traversal.png"),
+                y_minor_labels=[2, 5, 20])
 
 
 def fig3(results_dir, figures_dir):
@@ -197,8 +224,11 @@ def fig3(results_dir, figures_dir):
     # Cache lines at the LIST's capacity in nodes: cache bytes / 16.
     # Two-line labels ("L3 8 MiB" / "524,288 nodes") are short enough to stay
     # above the data instead of running over the list line.
-    lines = [(b // NODE_BYTES, "%s %s\n%s nodes" % (name, fmt_bytes(b, None),
-                                                    "{:,}".format(b // NODE_BYTES)))
+    # The L3 label goes to the right of its line at mid-height: at the top-left
+    # spot it ran over the list line, which passes there on its way up.
+    lines = [(b // NODE_BYTES,
+              "%s %s\n%s nodes" % (name, fmt_bytes(b, None), "{:,}".format(b // NODE_BYTES)),
+              "mid-right" if name == "L3" else "top-left")
              for name, b in CACHES]
     notes = ["a list node is 16 bytes, an array element 8 bytes; dotted lines show each "
              "cache's capacity in list nodes (in array elements it is 2x larger)"]
