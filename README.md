@@ -24,7 +24,7 @@ make run                      # cpuinfo + the three benchmarks -> results/*.csv,
 make profile                  # perf stat profile -> results/profile_*.csv
 ```
 
-- `make run` takes several minutes. Do not run it with `make -j`: timing runs must not overlap. Close other heavy programs while it runs.
+- `make run` takes about 5 minutes on this machine (measured once on a clean clone). Do not run it with `make -j`: timing runs must not overlap. Close other heavy programs while it runs.
 - Individual targets: `make run-sweep`, `make run-matrix`, `make run-list`, `make cpuinfo`.
 - `make profile` runs `profile.sh`, pinned to CPU 2 with `taskset`. It uses `perf` from PATH and falls back to the newest `/usr/lib/linux-tools/*/perf` (on Ubuntu `/usr/bin/perf` is only a wrapper that fails when `perf` for the running kernel is not installed). Override with `PERF=/path/to/perf make profile`. If perf prints `<not supported>` for the second event group it is skipped with a message.
 - Benchmarks are built with `g++ -O2 -std=c++17` (release only) and use only the C++ standard library.
@@ -58,7 +58,7 @@ Reads an int64 array from 4 KiB to 256 MiB, either **sequentially** or by a **ra
 | 16 MiB | 0.567 | 84.3 |
 | 256 MiB | 0.758 | 145.6 |
 
-Random access is flat up to 32 KiB and then steps up after the L1d (32K), L2 (256K) and L3 (8M) sizes listed in `cpu_info.txt`. Sequential access barely moves (0.311 to 0.758 ns).
+Random access is flat up to 32 KiB and then steps up, consistent with the L1d (32K), L2 (256K) and L3 (8M) sizes in `cpu_info.txt`; the cause was not isolated. Sequential access barely moves (0.311 to 0.758 ns).
 
 ### 1b. `matrix_traversal`: row-major versus column-major
 
@@ -161,7 +161,10 @@ Results of the two real runs (from `agent/FINDINGS.md`; the cost is an estimate 
   3. The explanation was thin: it mentioned prefetching only, not dependent loads or the clock caveat.
 - **Run 2**, grounding trap, "What is my L2 cache size, and how do you know?": the agent said it was not measured, stated no size from memory, and presented the latency steps in `working_set_sweep.csv` as a hypothesis. Result: pass. Limit: one trap on one model is not proof that it never overclaims.
 - **Comparison:** Claude Code answering the Run 1 question directly cited cache sizes "from sysfs", which is outside the CSV/profiler data.
-- **Fix added after these runs:** hardware facts were not in `results/`, so the agent could not cite them. `make cpuinfo` now writes `results/cpu_info.txt` (called first by `make run`), the agent may read exactly that file, and the prompt treats it as a valid source. This change is covered by offline tests only; **re-running the agent with `cpu_info.txt` available: not run.**
+- **Fix added after these runs:** hardware facts were not in `results/`, so the agent could not cite them (Run 2 said "not measured" because the file did not exist yet). `make cpuinfo` now writes `results/cpu_info.txt` (called first by `make run`), the agent may read exactly that file, and the prompt treats it as a valid source. The fix was re-run in Runs 3 and 4 (`agent/FINDINGS.md`):
+  - **Run 3**, the same L2 question with the file available: 2 API calls, 1 tool call (`read_csv` `cpu_info.txt`); 3,371 input + 397 output = 3,768 tokens, estimated cost $0.00054. It quoted L2 ONE-SIZE 256K and ALL-SIZE 1M, matching the file.
+  - **Run 4**, "How much L1 data cache does my CPU have in total, and does the sweep data show it?": 3 API calls, 3 tool calls (`list_results`, `read_csv` `cpu_info.txt`, `read_csv` `working_set_sweep.csv`); 6,550 input + 1,119 output = 7,669 tokens, estimated cost $0.00121. It quoted L1d ONE-SIZE 32K and ALL-SIZE 128K, tied the random-latency step between 32 KB (1.201 ns) and 64 KB (2.589 ns) to the 32K size, and said a single sweep cannot show the 128K total.
+  - **Two weak spots in Run 4:** (a) "256 KiB per core" is not in the file (`lscpu` says per instance) and the agent itself said the file gives no core count; (b) "a single-threaded sweep can only use one L1d" is reasoning from outside the data, stated as fact.
 
 ## Measurement pitfalls checked
 
@@ -181,7 +184,7 @@ Results of the two real runs (from `agent/FINDINGS.md`; the cost is an estimate 
 - **List versus array mixes two effects:** cache-line use and dependent versus independent loads. They were not separated.
 - **What perf's `cache-misses` counts** was not verified against Intel documentation in this repository. Row-major's net `cache-misses` (22,358,433) is much larger than its net `LLC-load-misses` (384,941); my guess is that prefetch traffic is included in the first, which I did not test.
 - **Power-of-two sizes and strides** can cause cache-set conflicts and TLB misses; the column-major cost mixes line waste, conflicts and TLB misses (the profile shows about one dTLB miss per element).
-- **One grounding trap only,** on one model (see above).
+- **Only one trap question** (Run 2) and two follow-up checks (Runs 3 and 4), all on one model.
 - **The cost figures are an estimate** based on a price constant in `agent.py` that I have not verified against the pricing page.
 - **Extra files in `results/`:** `results/` can contain extra files from earlier runs; the agent can read any `*.csv` there and is told to name the file for each number. `run_benchmark` overwrites the matching CSV.
 - One machine only; no other CPU was tested.
@@ -190,7 +193,7 @@ Results of the two real runs (from `agent/FINDINGS.md`; the cost is an estimate 
 
 - Repeat the measurements with `scaling_governor=performance` to see how much of the column-major slowdown is the clock: **not run**.
 - Repeat each benchmark several times and plot error bars (min/median/max): **not run**.
-- Add more grounding trap questions (other hardware facts, leading questions, questions the data cannot answer) and re-run the agent with `cpu_info.txt` available: **not run**.
+- Add more grounding trap questions (other hardware facts, leading questions, questions the data cannot answer): **not run**.
 - Separate the dependent-load effect from the cache-line effect in `array_vs_list` (for example a list in sequential link order): **not run**.
 
 ## Repository layout
