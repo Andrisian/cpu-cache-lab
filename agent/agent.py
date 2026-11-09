@@ -58,8 +58,8 @@ LOG_PATH = ROOT / "logs" / "agent_log.jsonl"
 SYSTEM_PROMPT = """You are a careful performance-analysis assistant for the cpu-cache-lab project (C++ cache micro-benchmarks and a perf stat profile). You can only learn about this machine through your tools. A human approves every tool call first; a denial means you get no data.
 
 Rules (follow them strictly):
-1. State a hardware or performance fact ONLY if it comes from CSV or profiler output returned by a tool in this conversation. Quote the exact numbers you rely on, with the file name (and the pattern/size or perf event) each number came from.
-2. For anything else (cache sizes, CPU model, clock speed, core counts, what a perf event counts, ...) write "not measured". Do not fill such facts in from memory. Do not guess cache sizes or CPU specs.
+1. State a hardware or performance fact ONLY if it comes from CSV output, profiler output, or results/cpu_info.txt returned by a tool in this conversation. cpu_info.txt is a valid source for hardware facts (CPU model, cache sizes). Quote the exact numbers you rely on, with the file name (and the pattern/size, perf event or cache level) each number came from.
+2. For anything else (cache sizes or CPU model when cpu_info.txt was not read or does not say, clock speed, core counts, what a perf event counts, ...) write "not measured". Do not fill such facts in from memory. Do not guess cache sizes or CPU specs.
 3. You may do arithmetic on quoted numbers; label it "derived" and show the calculation.
 4. Do not claim a cause unless the numbers show it. Give causes as hypotheses and say they were not tested.
 5. The data are single runs with an uncontrolled CPU clock. Say so when comparing close numbers and do not over-read small differences.
@@ -67,7 +67,7 @@ Rules (follow them strictly):
 7. If the data needed to answer is missing, say what is missing instead of answering.
 Keep answers short and precise.
 
-File guide (project layout, not a measurement): benchmark CSVs have the header benchmark,pattern,size_bytes,ns_per_access. profile_*.csv files are raw `perf stat -x,` output (columns: value, unit, event, variance, run time in ns, percent of time counted, ...); profile_none.csv is the setup-only baseline (matrix fill, no traversal), so a kernel's own counts are profile_row or profile_col minus profile_none."""
+File guide (project layout, not a measurement): benchmark CSVs have the header benchmark,pattern,size_bytes,ns_per_access. profile_*.csv files are raw `perf stat -x,` output (columns: value, unit, event, variance, run time in ns, percent of time counted, ...); profile_none.csv is the setup-only baseline (matrix fill, no traversal), so a kernel's own counts are profile_row or profile_col minus profile_none. cpu_info.txt holds the CPU model line from lscpu and the `lscpu --caches` table; in that table ONE-SIZE is the size of one cache instance and ALL-SIZE is the total over all of them."""
 
 
 # ---------------------------------------------------------------- secrets
@@ -107,11 +107,16 @@ class RunLog:
 # Each tool function takes the model's arguments (a dict) and returns
 # (output_text, is_error). They never raise.
 
+# Besides *.csv, exactly these names may be listed and read (explicit allowlist).
+# cpu_info.txt is written by `make cpuinfo` (lscpu model line + lscpu --caches).
+EXTRA_ALLOWED_FILES = ("cpu_info.txt",)
+
+
 def safe_results_path(name: Any) -> Path:
     """Map a file name from the model to a path inside results/, or raise
-    ValueError. Rejects empty names, absolute paths, '..', backslashes and
-    non-.csv names; then resolves symlinks and checks the real path is still
-    inside results/."""
+    ValueError. Rejects empty names, absolute paths, '..', backslashes, and
+    any name that is neither a .csv file nor exactly in EXTRA_ALLOWED_FILES;
+    then resolves symlinks and checks the real path is still inside results/."""
     if not isinstance(name, str) or not name.strip():
         raise ValueError("name must be a non-empty string")
     if "\x00" in name or "\\" in name:
@@ -120,8 +125,8 @@ def safe_results_path(name: Any) -> Path:
         raise ValueError("absolute paths are not allowed")
     if ".." in name:
         raise ValueError("'..' is not allowed")
-    if not name.endswith(".csv"):
-        raise ValueError("only .csv files can be read")
+    if not name.endswith(".csv") and name not in EXTRA_ALLOWED_FILES:
+        raise ValueError("only .csv files and %s can be read" % ", ".join(EXTRA_ALLOWED_FILES))
     results_real = RESULTS_DIR.resolve()
     path = (RESULTS_DIR / name).resolve()  # follows symlinks
     try:
@@ -135,7 +140,8 @@ def tool_list_results(args: Dict[str, Any]) -> Tuple[str, bool]:
     if not RESULTS_DIR.is_dir():
         return "results/ does not exist (no benchmark has been run yet)", True
     names = sorted(p.name for p in RESULTS_DIR.glob("*.csv"))
-    return ("\n".join(names) if names else "(no CSV files in results/)"), False
+    names += [n for n in EXTRA_ALLOWED_FILES if (RESULTS_DIR / n).is_file()]
+    return ("\n".join(names) if names else "(no readable files in results/)"), False
 
 
 def tool_read_csv(args: Dict[str, Any]) -> Tuple[str, bool]:
@@ -206,15 +212,17 @@ def schema(properties: Dict[str, Any], required: List[str]) -> Dict[str, Any]:
 
 TOOLS = {
     "list_results": {
-        "description": "List the CSV files in the results/ directory (file names only).",
+        "description": ("List the files you can read in results/: the CSV files, and cpu_info.txt "
+                        "if it exists (file names only)."),
         "input_schema": schema({}, []),
         "func": tool_list_results,
     },
     "read_csv": {
-        "description": ("Return the text of one CSV file in results/. 'name' is a file name "
-                        "such as 'matrix_traversal.csv'. Paths, '..' and non-.csv names are rejected."),
+        "description": ("Return the text of one file in results/. 'name' is a CSV file name such as "
+                        "'matrix_traversal.csv', or exactly 'cpu_info.txt'. Paths, '..' and any other "
+                        "name are rejected."),
         "input_schema": schema(
-            {"name": {"type": "string", "description": "CSV file name inside results/"}}, ["name"]),
+            {"name": {"type": "string", "description": "file name inside results/"}}, ["name"]),
         "func": tool_read_csv,
     },
     "run_benchmark": {

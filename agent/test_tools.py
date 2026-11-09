@@ -101,6 +101,53 @@ def test_path_restriction():
         assert not err and "real.csv" in listing
 
 
+def test_cpu_info_allowlist():
+    """results/cpu_info.txt is readable and listed; no other non-.csv name is."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        results = tmp / "results"
+        results.mkdir()
+        (results / "cpu_info.txt").write_text("# CPU model\nModel name: Test CPU\n")
+        (results / "notes.txt").write_text("not allowed\n")
+        (results / "cpu_info.txt.bak").write_text("not allowed\n")
+        (results / "real.csv").write_text("a,b\n")
+        (results / "sub").mkdir()
+        (results / "sub" / "cpu_info.txt").write_text("not allowed\n")
+        agent.RESULTS_DIR = results
+
+        out, err = agent.tool_read_csv({"name": "cpu_info.txt"})
+        assert not err and "Model name: Test CPU" in out
+        listing, err = agent.tool_list_results({})
+        assert not err and listing.split("\n") == ["real.csv", "cpu_info.txt"], listing
+
+        # explicit allowlist: other names, other spellings, sub-directories, traversal
+        for bad in ["notes.txt", "cpu_info.txt.bak", "CPU_INFO.TXT", "cpu_info", "sub/cpu_info.txt",
+                    "../cpu_info.txt", "/etc/hostname", "cpu_info.txt\x00", "./cpu_info.txt "]:
+            out, err = agent.tool_read_csv({"name": bad})
+            assert err and out.startswith("rejected"), (bad, out)
+
+        # a symlink named cpu_info.txt that points outside results/ is still rejected
+        (results / "cpu_info.txt").unlink()
+        (tmp / "outside.txt").write_text("outside\n")
+        (results / "cpu_info.txt").symlink_to(tmp / "outside.txt")
+        out, err = agent.tool_read_csv({"name": "cpu_info.txt"})
+        assert err and out.startswith("rejected"), out
+
+        # missing cpu_info.txt: not listed, clear "not found" if asked for
+        (results / "cpu_info.txt").unlink()
+        listing, _ = agent.tool_list_results({})
+        assert "cpu_info.txt" not in listing
+        out, err = agent.tool_read_csv({"name": "cpu_info.txt"})
+        assert err and "not found" in out
+
+
+def test_system_prompt_allows_cpu_info():
+    assert "cpu_info.txt" in agent.SYSTEM_PROMPT
+    assert "valid source for hardware facts" in agent.SYSTEM_PROMPT
+    assert "Quote the exact numbers" in agent.SYSTEM_PROMPT
+    assert "not measured" in agent.SYSTEM_PROMPT
+
+
 def test_truncation():
     short, cut = agent.truncate_for_model("x" * 10)
     assert short == "x" * 10 and not cut
