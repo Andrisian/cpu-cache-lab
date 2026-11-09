@@ -1,0 +1,5 @@
+# started on Sun Nov  8 15:23:20 2026
+
+4761070,,L1-dcache-load-misses,0.40%,61536788,100.00,,
+3903,,dTLB-load-misses,1.42%,61536788,100.00,,
+32340,,LLC-load-misses,1.97%,61536788,100.00,,

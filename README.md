@@ -1,12 +1,12 @@
 # cpu-cache-lab
 
-Small C++ micro-benchmarks that make CPU cache effects visible (time per memory access versus working-set size, matrix traversal order, array versus linked list), a `perf stat` profile that shows the hardware counters behind one of them, plots of the results, and a small Python LLM agent that analyzes the output under human approval. Everything was measured on one machine (Intel Core i7-8565U, see `results/cpu_info.txt` below), so the numbers describe that machine only.
+Small C++ micro-benchmarks that make CPU cache effects visible (time per memory access versus working-set size, matrix traversal order, array versus linked list), a `perf stat` profile that shows the hardware counters behind one of them, plots of the results, and a small Python LLM agent that analyzes the output under human approval. Everything was measured on one machine (Intel Core i7-8565U, see `data/run1/cpu_info.txt` below), so the numbers describe that machine only.
 
-**About the numbers in this README:** they come from one run on the author's machine. They are read from the local `results/` files, which are gitignored (not in the repository), from the profiler output in `results/profile_*.csv`, and from `agent/FINDINGS.md`. The file next to each number says where it came from. A re-run gives different numbers (single runs, uncontrolled CPU clock); the shape of the results is what to compare. Derived values (ratios, per-element counts) are my arithmetic on those numbers and are marked "derived".
+**About the numbers in this README:** they come from one run on the author's machine, saved in `data/run1/` (a copy of that run's `results/` files, a few KB, committed so the tables can be checked), and from `agent/FINDINGS.md`. The file next to each number says where it came from. New runs go to `results/` (gitignored), so a re-run never overwrites `data/run1/`. A re-run gives different numbers (single runs, uncontrolled CPU clock); the shape of the results is what to compare. Derived values (ratios, per-element counts) are my arithmetic on those numbers and are marked "derived".
 
 ## Machine
 
-From `results/cpu_info.txt` (written by `make cpuinfo`, which is the output of `lscpu`):
+From `data/run1/cpu_info.txt` (written by `make cpuinfo`, which is the output of `lscpu`):
 
 - Model: Intel(R) Core(TM) i7-8565U CPU @ 1.80GHz
 - L1d: 32K per cache (128K total), L2: 256K per cache (1M total), L3: 8M
@@ -23,6 +23,8 @@ make run                      # cpuinfo + the three benchmarks -> results/*.csv,
 .venv/bin/python plot.py      # figures/*.png  (run AFTER make run; results/ is not in git)
 make profile                  # perf stat profile -> results/profile_*.csv
 ```
+
+The numbers in this README are saved in `data/run1/`; new runs go to `results/`. To rebuild the figures without running anything: `.venv/bin/python plot.py data/run1 figures`.
 
 - `make run` takes about 5 minutes on this machine (measured once on a clean clone). Do not run it with `make -j`: timing runs must not overlap. Close other heavy programs while it runs.
 - Individual targets: `make run-sweep`, `make run-matrix`, `make run-list`, `make cpuinfo`.
@@ -44,7 +46,7 @@ All benchmarks warm up once, run 7 repetitions, report the median with `std::chr
 
 ### 1a. `working_set_sweep`: time per access versus working-set size
 
-Reads an int64 array from 4 KiB to 256 MiB, either **sequentially** or by a **random pointer-chase** (a random single-cycle permutation, so every load depends on the previous one). Source: `results/working_set_sweep.csv`.
+Reads an int64 array from 4 KiB to 256 MiB, either **sequentially** or by a **random pointer-chase** (a random single-cycle permutation, so every load depends on the previous one). Source: `data/run1/working_set_sweep.csv`.
 
 | Size | Sequential (ns/access) | Random (ns/access) |
 |---|---|---|
@@ -62,7 +64,7 @@ Random access is flat up to 32 KiB and then steps up, consistent with the L1d (3
 
 ### 1b. `matrix_traversal`: row-major versus column-major
 
-Sums an N x N matrix of doubles in both orders, N = 256 to 4096, with the same number of element reads (2^24) per point. Source: `results/matrix_traversal.csv`.
+Sums an N x N matrix of doubles in both orders, N = 256 to 4096, with the same number of element reads (2^24) per point. Source: `data/run1/matrix_traversal.csv`.
 
 | N | Matrix size | Row-major (ns/access) | Column-major (ns/access) | Column / row (derived) |
 |---|---|---|---|---|
@@ -76,7 +78,7 @@ Row-major stays near 1 ns. Column-major reads with a stride of N x 8 bytes (32 K
 
 ### 1c. `array_vs_list`: contiguous array versus randomly linked list
 
-Sums n int64 values from a contiguous `std::vector<int64_t>` and from a pool of 16-byte nodes linked into one random cycle. The nodes sit in one contiguous vector and only the links are shuffled, so this is **not** a `std::list`. Both patterns compare the same element count n; the byte footprints differ (8 versus 16 bytes per element). Source: `results/array_vs_list.csv`.
+Sums n int64 values from a contiguous `std::vector<int64_t>` and from a pool of 16-byte nodes linked into one random cycle. The nodes sit in one contiguous vector and only the links are shuffled, so this is **not** a `std::list`. Both patterns compare the same element count n; the byte footprints differ (8 versus 16 bytes per element). Source: `data/run1/array_vs_list.csv`.
 
 | n | Array (ns/element) | List (ns/element) | List / array (derived) |
 |---|---|---|---|
@@ -94,7 +96,7 @@ The array stays between 0.318 and 0.893 ns. The list rises steeply and reaches 1
 
 ## Figures
 
-Made by `plot.py` from the CSVs above (log-log axes, one marker per measurement, dotted lines at the cache sizes from `cpu_info.txt`). The PNGs in `figures/` are from the author's run; running `make run` and `plot.py` regenerates them from your numbers.
+Made by `plot.py` from the CSVs above (log-log axes, one marker per measurement, dotted lines at the cache sizes from `cpu_info.txt`). The PNGs in `figures/` are from the author's run: `.venv/bin/python plot.py data/run1` regenerates them from the saved CSVs (checked: byte-identical to the committed PNGs), while `make run` followed by `plot.py` makes new figures from your own numbers.
 
 - `figures/fig1_working_set_sweep.png`: ns per access versus working-set size, sequential versus random.
 - `figures/fig2_matrix_traversal.png`: row-major versus column-major (x labels include N).
@@ -108,7 +110,7 @@ Made by `plot.py` from the CSVs above (log-log axes, one marker per measurement,
 
 `profile.sh` runs `perf stat` (3 repetitions, mean reported, pinned to CPU 2) on `profile_matrix` at N = 4096 for 8 passes: `none` (build and fill the matrix only), `row` and `col`. Every event was counted 100.00% of the time in both event groups (the percentage column of the profile CSVs), so there was no counter multiplexing. The `none` run is the setup baseline (allocation, page faults, the 128 MiB fill), which every run includes; kernel counts are the run minus `none`.
 
-Raw counts (measured by perf), sources `results/profile_none.csv`, `profile_row.csv`, `profile_col.csv` and the `*_group2.csv` files:
+Raw counts (measured by perf), sources `data/run1/profile_none.csv`, `profile_row.csv`, `profile_col.csv` and the `*_group2.csv` files:
 
 | Event | none | row | col |
 |---|---|---|---|
@@ -141,7 +143,7 @@ perf's own "insn per cycle" column in the CSVs (1.22 for row, 0.28 for col) incl
 
 Column-major used about 5.7 times the cycles of row-major (derived: 3,476,690,552 / 605,475,789) for about the same number of instructions, and missed the dTLB about once per element.
 
-**The clock moved between runs.** Dividing the cycle count by the run time perf printed in the same line gives 4.090 GHz for `none`, 4.090 GHz for `row` and 0.709 GHz for `col` (derived from `profile_*.csv`). So cycles and nanoseconds are not proportional between the two patterns, and the nanosecond ratio in 1b (25.4) is larger than the cycle ratio (5.7).
+**The clock moved between runs.** Dividing the cycle count by the run time perf printed in the same line gives 4.090 GHz for `none`, 4.090 GHz for `row` and 0.709 GHz for `col` (derived from `data/run1/profile_*.csv`). So cycles and nanoseconds are not proportional between the two patterns, and the nanosecond ratio in 1b (25.4) is larger than the cycle ratio (5.7).
 
 ## The analysis agent
 
@@ -180,7 +182,7 @@ Results of the two real runs (from `agent/FINDINGS.md`; the cost is an estimate 
 
 - **CPU clock not controlled.** The core clock differed between runs inside the profile (0.709 GHz for `col` versus 4.090 GHz for `row`, derived above). The nanosecond results therefore mix stalls with clock changes. The power governor was not changed.
 - **Single-run plots hide variance.** Each point is one median of 7 repetitions from one invocation, with no error bars. A second full run on a clean clone gave different numbers at the larger sizes (its CSVs were not kept); small-size values were close.
-- **The array outlier at n = 3,000,000.** The array reads 0.893 ns there, above 0.487 at n = 1,000,000 and 0.629 at n = 10,000,000 (`array_vs_list.csv`). It did not reappear in the second run. Not investigated; I treat it as noise.
+- **The array outlier at n = 3,000,000.** The array reads 0.893 ns there, above 0.487 at n = 1,000,000 and 0.629 at n = 10,000,000 (`data/run1/array_vs_list.csv`). It did not reappear in the second run. Not investigated; I treat it as noise.
 - **List versus array mixes two effects:** cache-line use and dependent versus independent loads. They were not separated.
 - **What perf's `cache-misses` counts** was not verified against Intel documentation in this repository. Row-major's net `cache-misses` (22,358,433) is much larger than its net `LLC-load-misses` (384,941); my guess is that prefetch traffic is included in the first, which I did not test.
 - **Power-of-two sizes and strides** can cause cache-set conflicts and TLB misses; the column-major cost mixes line waste, conflicts and TLB misses (the profile shows about one dTLB miss per element).
@@ -202,5 +204,6 @@ Results of the two real runs (from `agent/FINDINGS.md`; the cost is an estimate 
 - `Makefile`, `profile.sh`: build, run, profile
 - `plot.py`, `figures/`: plots
 - `agent/`: `agent.py`, `test_tools.py`, `FINDINGS.md`
-- `results/` (gitignored): CSVs, `cpu_info.txt`, `profile_*.csv`; `logs/` (gitignored): agent log
+- `data/run1/`: the saved CSVs, `cpu_info.txt` and `profile_*.csv` behind the tables in this README
+- `results/` (gitignored): where new runs go (CSVs, `cpu_info.txt`, `profile_*.csv`); `logs/` (gitignored): agent log
 - `SPEC.md`: the original specification; `CLAUDE.md`: working rules for the coding assistant

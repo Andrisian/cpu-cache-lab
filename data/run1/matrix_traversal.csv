@@ -1,0 +1,11 @@
+benchmark,pattern,size_bytes,ns_per_access
+matrix_traversal,row_major,524288,0.989508
+matrix_traversal,column_major,524288,1.22974
+matrix_traversal,row_major,2097152,1.01839
+matrix_traversal,column_major,2097152,1.33314
+matrix_traversal,row_major,8388608,1.11531
+matrix_traversal,column_major,8388608,4.03098
+matrix_traversal,row_major,33554432,1.11073
+matrix_traversal,column_major,33554432,17.0237
+matrix_traversal,row_major,134217728,1.11183
+matrix_traversal,column_major,134217728,28.1975
