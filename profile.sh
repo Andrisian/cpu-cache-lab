@@ -10,12 +10,27 @@
 # Group 2 events: L1-dcache-load-misses,dTLB-load-misses,LLC-load-misses
 #                 (skipped, with a message, if perf prints <not supported>)
 #
-# /usr/bin/perf is a wrapper that needs a perf matching the running kernel
-# (not installed here), so use the installed 5.15 binary directly. Override
-# with:  PERF=/path/to/perf ./profile.sh
+# Which perf binary is used (the choice is printed at the start):
+#   1. PERF from the environment, if set:  PERF=/path/to/perf ./profile.sh
+#   2. otherwise `perf` from PATH, if it runs. On Ubuntu /usr/bin/perf is a
+#      wrapper that fails when perf for the running kernel is not installed.
+#   3. otherwise the newest /usr/lib/linux-tools/*/perf (sorted by version).
 set -eu
 
-PERF="${PERF:-/usr/lib/linux-tools/5.15.0-131-generic/perf}"
+if [ -n "${PERF:-}" ]; then
+    PERF_SOURCE="PERF environment variable"
+elif perf --version >/dev/null 2>&1; then
+    PERF=perf
+    PERF_SOURCE="perf from PATH ($(command -v perf))"
+else
+    PERF="$(ls -d /usr/lib/linux-tools/*/perf 2>/dev/null | sort -V | tail -n 1 || true)"
+    if [ -z "$PERF" ]; then
+        echo "no working perf: 'perf' from PATH fails and no /usr/lib/linux-tools/*/perf found" >&2
+        exit 1
+    fi
+    PERF_SOURCE="fallback, newest /usr/lib/linux-tools/*/perf ('perf' from PATH does not run)"
+fi
+
 CPU=2
 PASSES=8
 REPS=3
@@ -25,6 +40,7 @@ GROUP2="L1-dcache-load-misses,dTLB-load-misses,LLC-load-misses"
 
 mkdir -p results
 echo "CPU: $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | sed 's/^ //')"
+echo "perf binary: $PERF [$PERF_SOURCE]"
 echo "perf: $("$PERF" --version)"
 echo "pinned to CPU $CPU, $PASSES passes, $REPS repetitions per kernel"
 
