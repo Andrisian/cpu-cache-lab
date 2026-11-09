@@ -1,0 +1,5 @@
+# Direct imports only, pinned to the versions in the project's .venv (Python 3.8.10).
+# Their own dependencies (numpy, pydantic, ...) are resolved by pip.
+matplotlib==3.7.5   # plot.py
+anthropic==0.72.0   # agent/agent.py
+httpx==0.28.1       # agent/test_tools.py (also installed with anthropic)
